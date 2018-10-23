@@ -20,6 +20,8 @@ var ambientAttrib;
 var diffuseAttrib;
 var specularAttrib;
 var nAttrib;
+var inputTriangles;
+var modelMatrixULoc;
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -75,7 +77,7 @@ function setupWebGL() {
 
 // read triangles in, load them into webgl buffers
 function loadTriangles() {
-    var inputTriangles = getJSONFile(INPUT_TRIANGLES_URL,"triangles");
+    inputTriangles = getJSONFile(INPUT_TRIANGLES_URL,"triangles");
     if (inputTriangles != String.null) { 
         var whichSetVert; // index of vertex in current triangle set
         var whichSetTri; // index of triangle in current triangle set
@@ -191,6 +193,7 @@ function setupShaders() {
         uniform vec3 lAmbient;
         uniform vec3 lDiffuse;
         uniform vec3 lSpecular;
+        uniform mat4 uModelMatrix; // the model matrix
         attribute vec3 vertexPosition;
         attribute vec3 normalVector;
         attribute vec3 mAmbienta;
@@ -210,7 +213,7 @@ function setupShaders() {
         varying vec3 lightS;
 
         void main(void) {
-            gl_Position = vec4(vertexPosition, 1.0); // use the untransformed position
+            gl_Position = uModelMatrix * vec4(vertexPosition, 1.0); // use the untransformed position
             vertexPos = vertexPosition;
             normal = normalVector;
             mAmbient = mAmbienta;
@@ -290,6 +293,31 @@ function setupShaders() {
                     var lightSpecular = gl.getUniformLocation(shaderProgram, "lSpecular");
                     gl.uniform3fv(lightSpecular, new Float32Array(lSpecularArray));
                 }
+                
+                modelMatrixULoc = gl.getUniformLocation(shaderProgram, "uModelMatrix"); // ptr to mmat
+
+                var mMatrix = mat4.create();
+                var setCenter = vec3.fromValues(0,0,0);
+                gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+                mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
+                document.addEventListener('keydown', function(event) {
+                    if (event.keyCode === 65) {
+                        setCenter = vec3.fromValues(.01,0,0);
+                        mat4.multiply(mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter),
+                            mMatrix);
+                        gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+                    }
+                    if (event.keyCode === 68) {
+                        setCenter = vec3.fromValues(-.01,0,0);
+                        mat4.multiply(mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter),
+                            mMatrix);
+                        gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+                    }
+                });
+                mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
+                gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
             } // end if no shader program link errors
         } // end if no compile errors
     } // end try 
@@ -298,6 +326,7 @@ function setupShaders() {
         console.log(e);
     } // end catch
 } // end setup shaders
+
 var bgColor = 0;
 // render the loaded model
 function renderTriangles() {
@@ -305,6 +334,22 @@ function renderTriangles() {
     bgColor = (bgColor < 1) ? (bgColor + 0.001) : 0;
     gl.clearColor(bgColor, 0, 0, 1.0);
     requestAnimationFrame(renderTriangles);
+
+    // var numTriangleSets = inputTriangles.length;
+    // for (var whichTriSet=0; whichTriSet<numTriangleSets; whichTriSet++) { 
+        
+    //     // // pass modeling matrix for set to shadeer
+    //     // gl.uniformMatrix4fv(modelMatrixULoc, false, inputTriangles[whichTriSet].mMatrix);
+
+    //     // // vertex buffer: activate and feed into vertex shader
+    //     // gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffers[whichTriSet]); // activate
+    //     // gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
+
+    //     // // triangle buffer: activate and render
+    //     // gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,triangleBuffers[whichTriSet]); // activate
+    //     // gl.drawElements(gl.TRIANGLES,3*triSetSizes[whichTriSet],gl.UNSIGNED_SHORT,0); // render
+    // } // end for each tri set
+    
     // vertex buffer: activate and feed into vertex shader
     gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer); // activate
     gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
@@ -322,7 +367,6 @@ function renderTriangles() {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, triangleBuffer);
     gl.drawElements(gl.TRIANGLES,triBufferSize,gl.UNSIGNED_SHORT,0);
 } // end render triangles
-
 
 /* MAIN -- HERE is where execution begins after window load */
 
