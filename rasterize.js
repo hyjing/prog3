@@ -8,6 +8,9 @@ const INPUT_TRIANGLES_URL = "https://ncsucgclass.github.io/prog3/triangles.json"
 const INPUT_LIGHTS_URL = "https://ncsucgclass.github.io/prog3/lights.json";
 const INPUT_SPHERES_URL = "https://ncsucgclass.github.io/prog3/spheres.json"; // spheres file loc
 var Eye = new vec4.fromValues(0.5,0.5,-0.5,1.0); // default eye position in world space
+var EyeVec = new vec3.fromValues(0.5,0.5,-0.5);
+var lookAt = new vec3.fromValues(0,0,1);
+var lookUp = new vec4.fromValues(0,1,0);
 
 /* webgl globals */
 var gl = null; // the all powerful gl object. It's all here folks!
@@ -118,7 +121,6 @@ function loadTriangles() {
             vtxBufferSize += inputTriangles[whichSet].vertices.length;
             triBufferSize += inputTriangles[whichSet].triangles.length;
         } // end for each triangle set 
-        console.log(indexArray);
         // console.log(coordArray.length);
         // send the vertex coords to webGL
         triBufferSize *= 3;
@@ -152,6 +154,23 @@ function loadTriangles() {
     } // end if triangles found
 } // end load triangles
 
+// function translate(out, a, b, v){
+//     let p = [], r=[];
+
+//     p[0] = a[0] - b[0];
+//     p[1] = a[1] - b[1];
+//     p[2] = a[2] - b[2];
+
+//     r[0] = p[0] + v[0];
+//     r[1] = p[1] + v[1];
+//     r[2] = p[2] + v[2];
+
+//     out[0] = r[0] + b[0];
+//     out[1] = r[1] + b[1];
+//     out[2] = r[2] + b[2];
+//     return out;
+//   }
+
 // setup the webGL shaders
 function setupShaders() {
     
@@ -168,19 +187,20 @@ function setupShaders() {
         varying vec3 lightA;
         varying vec3 lightD;
         varying vec3 lightS;
+        varying vec3 eyeLoc;
 
         void main(void) {
-            vec3 eyeLoc = vec3(0.5,0.5,-0.5);
+            // vec3 eye = vec3(0.5,0.5,-0.5);
             vec3 a = vec3(mAmbient[0] * lightA[0], mAmbient[1] * lightA[1], mAmbient[2] * lightA[2]);
             
             vec3 L = normalize(lightPos - vertexPos);
-            vec3 normN = normalize(normal);
+            vec3 normN = normal;
             vec3 d = vec3(mDiffuse[0] * lightD[0] * dot(normN, L), mDiffuse[1] * lightD[1] * dot(normN, L), mDiffuse[2] * lightD[2] * dot(normN, L));
 
-            vec3 V = eyeLoc - vertexPos;
+            vec3 V = normalize(eyeLoc - vertexPos);
             vec3 scale1 = vec3(dot(normN, L) * normN[0], dot(normN, L) * normN[1], dot(normN, L) * normN[2]);
             vec3 R = vec3(2.0 * scale1[0], 2.0 * scale1[1], 2.0 * scale1[2]) - L;
-            float sToMultiply = pow(dot(R, V), n);
+            float sToMultiply = pow(max(dot(R, V), 0.0), n);
             vec3 s = vec3(mSpecular[0] * lightS[0] * sToMultiply, mSpecular[1] * lightS[1] * sToMultiply, mSpecular[2] * lightS[2] * sToMultiply);
 
             gl_FragColor = vec4(a[0] + d[0] + s[0], a[1] + d[1] + s[1], a[2] + d[2] + s[2], 1.0); // all fragments are white
@@ -193,6 +213,7 @@ function setupShaders() {
         uniform vec3 lAmbient;
         uniform vec3 lDiffuse;
         uniform vec3 lSpecular;
+        uniform vec4 eyePos;
         uniform mat4 uModelMatrix; // the model matrix
         attribute vec3 vertexPosition;
         attribute vec3 normalVector;
@@ -211,15 +232,18 @@ function setupShaders() {
         varying vec3 lightA;
         varying vec3 lightD;
         varying vec3 lightS;
+        varying vec3 eyeLoc;
 
         void main(void) {
             gl_Position = uModelMatrix * vec4(vertexPosition, 1.0); // use the untransformed position
-            vertexPos = vertexPosition;
+            vertexPos = vec3(gl_Position[0], gl_Position[1], gl_Position[2]);
+            vec4 eyePosition = uModelMatrix * eyePos;
             normal = normalVector;
             mAmbient = mAmbienta;
             mDiffuse = mDiffusea;
             mSpecular = mSpeculara;
             n = na;
+            eyeLoc = vec3(eyePosition[0], eyePosition[1], eyePosition[2]);
             lightPos = lightLoc;
             lightA = lAmbient;
             lightD = lDiffuse;
@@ -273,7 +297,8 @@ function setupShaders() {
 
                 nAttrib = gl.getAttribLocation(shaderProgram, "na");
                 gl.enableVertexAttribArray(nAttrib); // input to shader from array
-
+                
+                
                 var inputLight = getJSONFile(INPUT_LIGHTS_URL,"light");
                 if (inputLight != String.null) {
                     var lightArray = [inputLight[0].x, inputLight[0].y, inputLight[0].z];
@@ -292,32 +317,94 @@ function setupShaders() {
 
                     var lightSpecular = gl.getUniformLocation(shaderProgram, "lSpecular");
                     gl.uniform3fv(lightSpecular, new Float32Array(lSpecularArray));
+
                 }
+
+                var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+                var zNear = 0.0001;
+                var zFar = 2000;
+                var projectionMatrix = mat4.create();
+                projectionMatrix = mat4.perspective(projectionMatrix, Math.PI / 2, aspect, zNear, zFar);
+                var lookAtMatrix = mat4.create();
+                lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                var eyePosition = gl.getUniformLocation(shaderProgram, "eyePos");
+                gl.uniform4fv(eyePosition, Eye);
                 
                 modelMatrixULoc = gl.getUniformLocation(shaderProgram, "uModelMatrix"); // ptr to mmat
 
                 var mMatrix = mat4.create();
+                mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                 var setCenter = vec3.fromValues(0,0,0);
                 gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
-                mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
-                document.addEventListener('keydown', function(event) {
-                    if (event.keyCode === 65) {
+                // mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
+                document.addEventListener('keypress', function(event) {
+                    if (event.key === 'a') {
                         setCenter = vec3.fromValues(.01,0,0);
-                        mat4.multiply(mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter),
-                            mMatrix);
-                        gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+
+                        // Eye = new vec4.fromValues(Eye[0] - .01,Eye[1],Eye[2],1.0);
+                        // gl.uniform4fv(eyePosition, Eye);
+                        Eye = vec4.dot(Eye, mat4.fromTranslation(mat4.create(), setCenter));
+                        var view = mat4.create();
+                        mat4.invert(view, Eye);
+                        // EyeVec = new vec3.fromValues(EyeVec[0] + .01, EyeVec[1], EyeVec[2]);
+                        mat4.multiply(projectionMatrix, view, projectionMatrix);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
-                    if (event.keyCode === 68) {
+                    if (event.key === 'd') {
                         setCenter = vec3.fromValues(-.01,0,0);
+                        EyeVec = new vec3.fromValues(EyeVec[0] - .01, EyeVec[1], EyeVec[2]);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                    }
+                    if (event.key === 'q') {
+                        setCenter = vec3.fromValues(0,.01,0);
                         mat4.multiply(mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter),
-                            mMatrix);
+                            mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter));
                         gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
                     }
+                    if (event.key === 'e') {
+                        setCenter = vec3.fromValues(0,-.01,0);
+                        mat4.multiply(mMatrix,
+                            mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter));
+                    }
+                    if (event.key === 's') {
+                        setCenter = vec3.fromValues(0,0,.01);
+                        mat4.multiply(mMatrix,
+                            mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter));
+                    }
+                    if (event.key === 'w') {
+                        setCenter = vec3.fromValues(0,0,-.01);
+                        mat4.multiply(mMatrix,
+                            mMatrix,
+                            mat4.fromTranslation(mat4.create(),setCenter));
+                    }
+                    if (event.key === 'A') {
+                        vec3.rotateY(lookAt, lookAt, EyeVec, Math.PI/40);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                    }
+                    if (event.key === 'D') {
+                        vec3.rotateY(lookAt, lookAt, EyeVec, -Math.PI/40);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                    }
+                    if (event.key === 'W') {
+                        vec3.rotateX(lookUp, lookUp, EyeVec, Math.PI/40);
+                        vec3.rotateX(lookAt, lookAt, EyeVec, Math.PI/40);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                    }
+                    if (event.key === 'S') {
+                        vec3.rotateX(lookUp, lookUp, EyeVec, -Math.PI/40);
+                        vec3.rotateX(lookAt, lookAt, EyeVec, -Math.PI/40);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                    }
+                    gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
                 });
-                mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
-                gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
             } // end if no shader program link errors
         } // end if no compile errors
     } // end try 
@@ -332,6 +419,7 @@ var bgColor = 0;
 function renderTriangles() {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // clear frame/depth buffers
     bgColor = (bgColor < 1) ? (bgColor + 0.001) : 0;
+    // bgColor = 0;
     gl.clearColor(bgColor, 0, 0, 1.0);
     requestAnimationFrame(renderTriangles);
 
