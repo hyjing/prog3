@@ -8,15 +8,13 @@ const INPUT_TRIANGLES_URL = "https://ncsucgclass.github.io/prog3/triangles.json"
 const INPUT_LIGHTS_URL = "https://ncsucgclass.github.io/prog3/lights.json";
 const INPUT_SPHERES_URL = "https://ncsucgclass.github.io/prog3/spheres.json"; // spheres file loc
 var Eye = new vec4.fromValues(0.5,0.5,-0.5,1.0); // default eye position in world space
-var EyeVec = new vec3.fromValues(0.5,0.5,-0.5);
 var lookAt = new vec3.fromValues(0,0,1);
-var lookUp = new vec4.fromValues(0,1,0);
+var lookUp = new vec3.fromValues(0,1,0);
 
 /* webgl globals */
 var gl = null; // the all powerful gl object. It's all here folks!
 var vertexBuffer; // this contains vertex coordinates in triples
 var triangleBuffer; // this contains indices into vertexBuffer in triples
-var triBufferSize = 0; // the number of indices in the triangle buffer
 var vertexPositionAttrib; // where to put position for vertex shader
 var normalVectorAttrib;
 var ambientAttrib;
@@ -25,6 +23,19 @@ var specularAttrib;
 var nAttrib;
 var inputTriangles;
 var modelMatrixULoc;
+var vertexBuffers = [];
+var triangleBuffers = [];
+var normalBuffers = [];
+var ambientBuffers = [];
+var diffuseBuffers = [];
+var specularBuffers = [];
+var nBuffers = [];
+var numTriangleSets = 0;
+var triSetSizes = [];
+var pmatrix;
+var lmatrix;
+var lookAtMatrix = mat4.create();
+var projectionMatrix = mat4.create();
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -81,95 +92,75 @@ function setupWebGL() {
 // read triangles in, load them into webgl buffers
 function loadTriangles() {
     inputTriangles = getJSONFile(INPUT_TRIANGLES_URL,"triangles");
+    numTriangleSets = inputTriangles.length;
     if (inputTriangles != String.null) { 
         var whichSetVert; // index of vertex in current triangle set
         var whichSetTri; // index of triangle in current triangle set
-        var vtxBufferSize = 0;
-        var coordArray = []; // 1D array of vertex coords for WebGL
-        var normalArray = [];
-        var ambientArray = [];
-        var diffuseArray = [];
-        var specularArray = [];
-        var nArray = [];
-        var indexArray = [];
         var vtxToAdd = [];
-        var indexOffset = vec3.create();
         var triToAdd = vec3.create();
 
         for (var whichSet=0; whichSet<inputTriangles.length; whichSet++) {
-            vec3.set(indexOffset,vtxBufferSize,vtxBufferSize,vtxBufferSize);
             // set up the vertex coord array
+            inputTriangles[whichSet].coordArray = [];
+            inputTriangles[whichSet].normalArray = [];
+            inputTriangles[whichSet].ambientArray = [];
+            inputTriangles[whichSet].diffuseArray = [];
+            inputTriangles[whichSet].specularArray = [];
+            inputTriangles[whichSet].nArray = [];
+            inputTriangles[whichSet].indexArray = [];
             for (whichSetVert=0; whichSetVert<inputTriangles[whichSet].vertices.length; whichSetVert++){
                 vtxToAdd = inputTriangles[whichSet].vertices[whichSetVert];
-                coordArray = coordArray.concat(inputTriangles[whichSet].vertices[whichSetVert]);
-                normalArray = normalArray.concat(inputTriangles[whichSet].normals[whichSetVert]);
+                inputTriangles[whichSet].coordArray = inputTriangles[whichSet].coordArray.concat(vtxToAdd);
+                inputTriangles[whichSet].normalArray = inputTriangles[whichSet].normalArray.concat(inputTriangles[whichSet].normals[whichSetVert]);
 
                 for (i=0; i<3; i++) {
-                    ambientArray = ambientArray.concat(inputTriangles[whichSet].material.ambient[i]);
-                    diffuseArray = diffuseArray.concat(inputTriangles[whichSet].material.diffuse[i]);
-                    specularArray = specularArray.concat(inputTriangles[whichSet].material.specular[i]);
+                    inputTriangles[whichSet].ambientArray = inputTriangles[whichSet].ambientArray.concat(inputTriangles[whichSet].material.ambient[i]);
+                    inputTriangles[whichSet].diffuseArray = inputTriangles[whichSet].diffuseArray.concat(inputTriangles[whichSet].material.diffuse[i]);
+                    inputTriangles[whichSet].specularArray = inputTriangles[whichSet].specularArray.concat(inputTriangles[whichSet].material.specular[i]);
+                    inputTriangles[whichSet].nArray = inputTriangles[whichSet].nArray.concat(inputTriangles[whichSet].material.n);
                 }
-                nArray = nArray.concat(inputTriangles[whichSet].material.n);
+                
                 // console.log(inputTriangles[whichSet].vertices[whichSetVert]);
             }
 
-            for (whichSetTri=0; whichSetTri<inputTriangles[whichSet].triangles.length; whichSetTri++){
-                vec3.add(triToAdd,indexOffset,inputTriangles[whichSet].triangles[whichSetTri]);
-                indexArray.push(triToAdd[0],triToAdd[1],triToAdd[2]);
-            }
+             // create a list of tri indices for this tri set
+            triSetSizes[whichSet] = inputTriangles[whichSet].triangles.length;
+            for (whichSetTri=0; whichSetTri<triSetSizes[whichSet]; whichSetTri++) {
+                triToAdd = inputTriangles[whichSet].triangles[whichSetTri];
+                inputTriangles[whichSet].indexArray = inputTriangles[whichSet].indexArray.concat(triToAdd[0],triToAdd[1],triToAdd[2]);
+            } // end for triangles in set
 
-            vtxBufferSize += inputTriangles[whichSet].vertices.length;
-            triBufferSize += inputTriangles[whichSet].triangles.length;
+            // send the vertex coords to webGL
+            vertexBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer for current set
+            gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].coordArray),gl.STATIC_DRAW); // coords to that buffer
+
+            triangleBuffers[whichSet] = gl.createBuffer(); // init empty triangle index buffer
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,triangleBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(inputTriangles[whichSet].indexArray),gl.STATIC_DRAW); // indices to that buffer
+
+            normalBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].normalArray),gl.STATIC_DRAW);
+
+            ambientBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].ambientArray),gl.STATIC_DRAW);
+
+            diffuseBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER,diffuseBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].diffuseArray),gl.STATIC_DRAW);
+
+            specularBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].specularArray),gl.STATIC_DRAW);
+
+            nBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER,nBuffers[whichSet]); // activate that buffer
+            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].nArray),gl.STATIC_DRAW);
         } // end for each triangle set 
-        // console.log(coordArray.length);
-        // send the vertex coords to webGL
-        triBufferSize *= 3;
-        vertexBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(coordArray),gl.STATIC_DRAW); // coords to that buffer
-        
-        triangleBuffer = gl.createBuffer(); // init empty triangle index buffer
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,triangleBuffer); // activate that buffer
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(indexArray),gl.STATIC_DRAW); // indices to that buffer
-
-        normalBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(normalArray),gl.STATIC_DRAW);
-
-        ambientBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(ambientArray),gl.STATIC_DRAW);
-
-        diffuseBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,diffuseBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(diffuseArray),gl.STATIC_DRAW);
-
-        specularBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(specularArray),gl.STATIC_DRAW);
-
-        nBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(nArray),gl.STATIC_DRAW);
     } // end if triangles found
 } // end load triangles
-
-// function translate(out, a, b, v){
-//     let p = [], r=[];
-
-//     p[0] = a[0] - b[0];
-//     p[1] = a[1] - b[1];
-//     p[2] = a[2] - b[2];
-
-//     r[0] = p[0] + v[0];
-//     r[1] = p[1] + v[1];
-//     r[2] = p[2] + v[2];
-
-//     out[0] = r[0] + b[0];
-//     out[1] = r[1] + b[1];
-//     out[2] = r[2] + b[2];
-//     return out;
-//   }
 
 // setup the webGL shaders
 function setupShaders() {
@@ -215,6 +206,8 @@ function setupShaders() {
         uniform vec3 lSpecular;
         uniform vec4 eyePos;
         uniform mat4 uModelMatrix; // the model matrix
+        uniform mat4 pMatrix;
+		uniform mat4 lMatrix;
         attribute vec3 vertexPosition;
         attribute vec3 normalVector;
         attribute vec3 mAmbienta;
@@ -235,7 +228,8 @@ function setupShaders() {
         varying vec3 eyeLoc;
 
         void main(void) {
-            gl_Position = uModelMatrix * vec4(vertexPosition, 1.0); // use the untransformed position
+            vec4 tempVal = uModelMatrix * vec4(vertexPosition, 1.0);
+            gl_Position = pMatrix * lMatrix * tempVal; // use the untransformed position
             vertexPos = vec3(gl_Position[0], gl_Position[1], gl_Position[2]);
             vec4 eyePosition = uModelMatrix * eyePos;
             normal = normalVector;
@@ -279,6 +273,11 @@ function setupShaders() {
                 throw "error during shader program linking: " + gl.getProgramInfoLog(shaderProgram);
             } else { // no shader program link errors
                 gl.useProgram(shaderProgram); // activate shader program (frag and vert)
+
+                modelMatrixULoc = gl.getUniformLocation(shaderProgram, "uModelMatrix");
+                pmatrix = gl.getUniformLocation(shaderProgram, "pMatrix"); 
+                lmatrix = gl.getUniformLocation(shaderProgram, "lMatrix");
+
                 vertexPositionAttrib = // get pointer to vertex shader input
                     gl.getAttribLocation(shaderProgram, "vertexPosition");
                 gl.enableVertexAttribArray(vertexPositionAttrib); // input to shader from array
@@ -297,7 +296,6 @@ function setupShaders() {
 
                 nAttrib = gl.getAttribLocation(shaderProgram, "na");
                 gl.enableVertexAttribArray(nAttrib); // input to shader from array
-                
                 
                 var inputLight = getJSONFile(INPUT_LIGHTS_URL,"light");
                 if (inputLight != String.null) {
@@ -320,90 +318,177 @@ function setupShaders() {
 
                 }
 
-                var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-                var zNear = 0.0001;
-                var zFar = 2000;
-                var projectionMatrix = mat4.create();
-                projectionMatrix = mat4.perspective(projectionMatrix, Math.PI / 2, aspect, zNear, zFar);
-                var lookAtMatrix = mat4.create();
-                lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                 var eyePosition = gl.getUniformLocation(shaderProgram, "eyePos");
                 gl.uniform4fv(eyePosition, Eye);
+
+                var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+                var zNear = 0.01;
+                var zFar = 2000;
                 
-                modelMatrixULoc = gl.getUniformLocation(shaderProgram, "uModelMatrix"); // ptr to mmat
+                var EyeVec = new vec3.fromValues(Eye[0],Eye[1],Eye[2]);
+                projectionMatrix = mat4.perspective(projectionMatrix, Math.PI / 2, aspect, zNear, zFar);
+                lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
+                console.log(lookAtMatrix);
 
-                var mMatrix = mat4.create();
-                mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                var selectionIndex = 0;
+                var lastAction = "";
+                
+                
+                for (var whichTriSet=0; whichTriSet<inputTriangles.length; whichTriSet++) {
+                    inputTriangles[whichTriSet].mMatrix = mat4.create();
+                    inputTriangles[whichTriSet].highlighted = false;
+                }
+
                 var setCenter = vec3.fromValues(0,0,0);
-                gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
-                // mat4.fromTranslation(mMatrix,vec3.negate(vec3.create(),setCenter));
-                document.addEventListener('keypress', function(event) {
-                    if (event.key === 'a') {
-                        setCenter = vec3.fromValues(.01,0,0);
+                document.addEventListener('keydown', function(event) {
+                    if (event.key === "ArrowLeft") {
+                        if (selectionIndex === 0) {
+                            selectionIndex = numTriangleSets - 1;
+                        } else {
+                            selectionIndex--;
+                        }
+                        inputTriangles[selectionIndex].mMatrix = mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromScaling(mat4.create(), vec3.fromValues(1.2,1.2,1.2)),
+                            inputTriangles[selectionIndex].mMatrix);
+                        inputTriangles[selectionIndex].highlighted = true;
+                        
+                        if (lastAction === "left") {
+                            if (selectionIndex === numTriangleSets - 1) {
+                                mat4.multiply(
+                                    inputTriangles[0].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[0].mMatrix);
+                                inputTriangles[0].highlighted = false;
+                            } else {
+                                mat4.multiply(
+                                    inputTriangles[selectionIndex + 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[selectionIndex + 1].mMatrix);
+                                inputTriangles[selectionIndex + 1].highlighted = false;
+                            }
+                        } else if (lastAction === "right") {
+                            if (selectionIndex === 0) {
+                                mat4.multiply(
+                                    inputTriangles[numTriangleSets - 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[numTriangleSets - 1].mMatrix);
+                                inputTriangles[numTriangleSets - 1].highlighted = false;
+                            } else {
+                                mat4.multiply(
+                                    inputTriangles[selectionIndex - 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[selectionIndex - 1].mMatrix);
+                                inputTriangles[selectionIndex - 1].highlighted = false;
+                            }
+                        }
 
-                        // Eye = new vec4.fromValues(Eye[0] - .01,Eye[1],Eye[2],1.0);
-                        // gl.uniform4fv(eyePosition, Eye);
-                        Eye = vec4.dot(Eye, mat4.fromTranslation(mat4.create(), setCenter));
-                        var view = mat4.create();
-                        mat4.invert(view, Eye);
-                        // EyeVec = new vec3.fromValues(EyeVec[0] + .01, EyeVec[1], EyeVec[2]);
-                        mat4.multiply(projectionMatrix, view, projectionMatrix);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
+                        lastAction = "left";
+                    }
+                    if (event.key === 'ArrowRight') {
+                        if (selectionIndex === numTriangleSets - 1) {
+                            selectionIndex = 0;
+                        } else {
+                            selectionIndex++;
+                        }
+
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromScaling(mat4.create(), vec3.fromValues(1.2,1.2,1.2)),
+                            inputTriangles[selectionIndex].mMatrix);
+                            inputTriangles[selectionIndex].highlighted = true;
+                        
+                        if (lastAction === "left") {
+                            if (selectionIndex === numTriangleSets - 1) {
+                                mat4.multiply(
+                                    inputTriangles[0].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[0].mMatrix);
+                                inputTriangles[0].highlighted = false;
+                            } else {
+                                mat4.multiply(
+                                    inputTriangles[selectionIndex + 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[selectionIndex + 1].mMatrix);
+                                inputTriangles[selectionIndex + 1].highlighted = false;
+                            }
+                        } else if (lastAction === "right") {
+                            if (selectionIndex === 0) {
+                                mat4.multiply(
+                                    inputTriangles[numTriangleSets - 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[numTriangleSets - 1].mMatrix);
+                                inputTriangles[numTriangleSets - 1].highlighted = false;
+                            } else {
+                                mat4.multiply(
+                                    inputTriangles[selectionIndex - 1].mMatrix,
+                                    mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                                    inputTriangles[selectionIndex - 1].mMatrix);
+                                inputTriangles[selectionIndex - 1].highlighted = false;
+                            }
+                        }
+
+                        lastAction = "right";
+                    }
+                    if (event.key === ' ' && inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromScaling(mat4.create(), vec3.fromValues(1/1.2,1/1.2,1/1.2)),
+                            inputTriangles[selectionIndex].mMatrix);
+                        inputTriangles[selectionIndex].highlighted = false;
+                        selectionIndex = 0;
+                        lastAction = "";
+                    }
+                    if (event.key === 'a') {
+                        EyeVec = new vec3.fromValues(EyeVec[0] + .01,EyeVec[1],EyeVec[2]);
+                        lookAt = new vec3.fromValues(lookAt[0] + .01, lookAt[1], lookAt[2]);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
                     if (event.key === 'd') {
-                        setCenter = vec3.fromValues(-.01,0,0);
-                        EyeVec = new vec3.fromValues(EyeVec[0] - .01, EyeVec[1], EyeVec[2]);
+                        EyeVec = new vec3.fromValues(EyeVec[0] - .01,EyeVec[1],EyeVec[2]);
+                        lookAt = new vec3.fromValues(lookAt[0] - .01, lookAt[1], lookAt[2]);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
                     if (event.key === 'q') {
-                        setCenter = vec3.fromValues(0,.01,0);
-                        mat4.multiply(mMatrix,
-                            mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter));
-                        gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+                        EyeVec = new vec3.fromValues(EyeVec[0],EyeVec[1] + .01,EyeVec[2]);
+                        lookAt = new vec3.fromValues(lookAt[0], lookAt[1] + .01, lookAt[2]);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
                     if (event.key === 'e') {
-                        setCenter = vec3.fromValues(0,-.01,0);
-                        mat4.multiply(mMatrix,
-                            mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter));
+                        EyeVec = new vec3.fromValues(EyeVec[0],EyeVec[1] - .01,EyeVec[2]);
+                        lookAt = new vec3.fromValues(lookAt[0], lookAt[1] - .01, lookAt[2]);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
                     if (event.key === 's') {
-                        setCenter = vec3.fromValues(0,0,.01);
-                        mat4.multiply(mMatrix,
-                            mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter));
+                        EyeVec = new vec3.fromValues(EyeVec[0],EyeVec[1],EyeVec[2] + .01);
+                        lookAt = new vec3.fromValues(lookAt[0], lookAt[1], lookAt[2] + .01);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
                     if (event.key === 'w') {
-                        setCenter = vec3.fromValues(0,0,-.01);
-                        mat4.multiply(mMatrix,
-                            mMatrix,
-                            mat4.fromTranslation(mat4.create(),setCenter));
+                        EyeVec = new vec3.fromValues(EyeVec[0],EyeVec[1],EyeVec[2] - .01);
+                        lookAt = new vec3.fromValues(lookAt[0], lookAt[1], lookAt[2] - .01);
+                        lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
                     if (event.key === 'A') {
                         vec3.rotateY(lookAt, lookAt, EyeVec, Math.PI/40);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
                     if (event.key === 'D') {
                         vec3.rotateY(lookAt, lookAt, EyeVec, -Math.PI/40);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
                     if (event.key === 'W') {
                         vec3.rotateX(lookUp, lookUp, EyeVec, Math.PI/40);
                         vec3.rotateX(lookAt, lookAt, EyeVec, Math.PI/40);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
                     if (event.key === 'S') {
                         vec3.rotateX(lookUp, lookUp, EyeVec, -Math.PI/40);
                         vec3.rotateX(lookAt, lookAt, EyeVec, -Math.PI/40);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
-                        mMatrix = mat4.multiply(mMatrix,projectionMatrix,lookAtMatrix);
                     }
-                    gl.uniformMatrix4fv(modelMatrixULoc, false, mMatrix);
+                    
+                    renderTriangles();
                 });
             } // end if no shader program link errors
         } // end if no compile errors
@@ -414,46 +499,37 @@ function setupShaders() {
     } // end catch
 } // end setup shaders
 
-var bgColor = 0;
 // render the loaded model
 function renderTriangles() {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // clear frame/depth buffers
-    bgColor = (bgColor < 1) ? (bgColor + 0.001) : 0;
+    // bgColor = (bgColor < 1) ? (bgColor + 0.001) : 0;
     // bgColor = 0;
-    gl.clearColor(bgColor, 0, 0, 1.0);
-    requestAnimationFrame(renderTriangles);
-
-    // var numTriangleSets = inputTriangles.length;
-    // for (var whichTriSet=0; whichTriSet<numTriangleSets; whichTriSet++) { 
-        
-    //     // // pass modeling matrix for set to shadeer
-    //     // gl.uniformMatrix4fv(modelMatrixULoc, false, inputTriangles[whichTriSet].mMatrix);
-
-    //     // // vertex buffer: activate and feed into vertex shader
-    //     // gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffers[whichTriSet]); // activate
-    //     // gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
-
-    //     // // triangle buffer: activate and render
-    //     // gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,triangleBuffers[whichTriSet]); // activate
-    //     // gl.drawElements(gl.TRIANGLES,3*triSetSizes[whichTriSet],gl.UNSIGNED_SHORT,0); // render
-    // } // end for each tri set
+    // gl.clearColor(bgColor, 0, 0, 1.0);
+    // requestAnimationFrame(renderTriangles);
     
     // vertex buffer: activate and feed into vertex shader
-    gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer); // activate
-    gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
-    gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer);
-    gl.vertexAttribPointer(normalVectorAttrib,3,gl.FLOAT,false,0,0); // feed
-    gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer);
-    gl.vertexAttribPointer(ambientAttrib,3,gl.FLOAT,false,0,0); // feed
-    gl.bindBuffer(gl.ARRAY_BUFFER,diffuseBuffer);
-    gl.vertexAttribPointer(diffuseAttrib,3,gl.FLOAT,false,0,0); // feed
-    gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer);
-    gl.vertexAttribPointer(specularAttrib,3,gl.FLOAT,false,0,0); // feed
-    gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer);
-    gl.vertexAttribPointer(nAttrib,1,gl.FLOAT,false,0,0); // feed
+    
+    for (var whichTriSet=0; whichTriSet<numTriangleSets; whichTriSet++) {
+        gl.uniformMatrix4fv(modelMatrixULoc, false, inputTriangles[whichTriSet].mMatrix);
+        gl.uniformMatrix4fv(pmatrix, false, projectionMatrix);
+		gl.uniformMatrix4fv(lmatrix, false, lookAtMatrix);
 
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, triangleBuffer);
-    gl.drawElements(gl.TRIANGLES,triBufferSize,gl.UNSIGNED_SHORT,0);
+        gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffers[whichTriSet]); // activate
+        gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
+        gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffers[whichTriSet]);
+        gl.vertexAttribPointer(normalVectorAttrib,3,gl.FLOAT,false,0,0); // feed
+        gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffers[whichTriSet]);
+        gl.vertexAttribPointer(ambientAttrib,3,gl.FLOAT,false,0,0); // feed
+        gl.bindBuffer(gl.ARRAY_BUFFER,diffuseBuffers[whichTriSet]);
+        gl.vertexAttribPointer(diffuseAttrib,3,gl.FLOAT,false,0,0); // feed
+        gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffers[whichTriSet]);
+        gl.vertexAttribPointer(specularAttrib,3,gl.FLOAT,false,0,0); // feed
+        gl.bindBuffer(gl.ARRAY_BUFFER,nBuffers[whichTriSet]);
+        gl.vertexAttribPointer(nAttrib,1,gl.FLOAT,false,0,0); // feed
+        // triangle buffer: activate and render
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,triangleBuffers[whichTriSet]); // activate
+        gl.drawElements(gl.TRIANGLES,3*triSetSizes[whichTriSet],gl.UNSIGNED_SHORT,0); // render
+    }
 } // end render triangles
 
 /* MAIN -- HERE is where execution begins after window load */
