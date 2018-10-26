@@ -36,6 +36,7 @@ var pmatrix;
 var lmatrix;
 var lookAtMatrix = mat4.create();
 var projectionMatrix = mat4.create();
+var lightSwitchNum = 1;
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -179,22 +180,35 @@ function setupShaders() {
         varying vec3 lightD;
         varying vec3 lightS;
         varying vec3 eyeLoc;
+        varying float lightSwitchToPass;
 
         void main(void) {
-            // vec3 eye = vec3(0.5,0.5,-0.5);
-            vec3 a = vec3(mAmbient[0] * lightA[0], mAmbient[1] * lightA[1], mAmbient[2] * lightA[2]);
+            if (lightSwitchToPass == 1.0) {
+                vec3 a = vec3(lightA[0] * mAmbient[0], lightA[1] * mAmbient[1], lightA[2] * mAmbient[2]);
+
+                vec3 L = normalize(lightPos - vertexPos);
+				vec3 d = vec3(lightD[0] * mDiffuse[0] * dot(normal, L), lightD[1] * mDiffuse[1] * dot(normal, L), lightD[2] * mDiffuse[2] * dot(normal, L));
+
+				vec3 V = normalize(eyeLoc - vertexPos);
+                vec3 scale1 = vec3(dot(normal, L) * normal[0], dot(normal, L) * normal[1], dot(normal, L) * normal[2]);
+                vec3 R = vec3(2.0 * scale1[0], 2.0 * scale1[1], 2.0 * scale1[2]) - L;
+                float sToMultiply = pow(max(dot(R, V), 0.0), n);
+				vec3 s = vec3(lightS[0] * mSpecular[0] * sToMultiply, lightS[1] * mSpecular[1] * sToMultiply, lightS[2] * mSpecular[2] * sToMultiply);
+
+                gl_FragColor = vec4(a[0] + d[0] + s[0], a[1] + d[1] + s[1], a[2] + d[2] + s[2], 1.0);
+            } else if (lightSwitchToPass == 2.0) {
+                vec3 a = vec3(lightA[0] * mAmbient[0], lightA[1] * mAmbient[1], lightA[2] * mAmbient[2]);
             
-            vec3 L = normalize(lightPos - vertexPos);
-            vec3 normN = normal;
-            vec3 d = vec3(mDiffuse[0] * lightD[0] * dot(normN, L), mDiffuse[1] * lightD[1] * dot(normN, L), mDiffuse[2] * lightD[2] * dot(normN, L));
-
-            vec3 V = normalize(eyeLoc - vertexPos);
-            vec3 scale1 = vec3(dot(normN, L) * normN[0], dot(normN, L) * normN[1], dot(normN, L) * normN[2]);
-            vec3 R = vec3(2.0 * scale1[0], 2.0 * scale1[1], 2.0 * scale1[2]) - L;
-            float sToMultiply = pow(max(dot(R, V), 0.0), n);
-            vec3 s = vec3(mSpecular[0] * lightS[0] * sToMultiply, mSpecular[1] * lightS[1] * sToMultiply, mSpecular[2] * lightS[2] * sToMultiply);
-
-            gl_FragColor = vec4(a[0] + d[0] + s[0], a[1] + d[1] + s[1], a[2] + d[2] + s[2], 1.0); // all fragments are white
+                vec3 L = lightPos - vertexPos;
+                vec3 d = vec3(lightD[0] * mDiffuse[0] * dot(normal, normalize(L)), lightD[1] * mDiffuse[1] * dot(normal, normalize(L)), lightD[2] * mDiffuse[2] * dot(normal, normalize(L)));
+    
+                vec3 V = eyeLoc - vertexPos;
+                vec3 H = L + V / (normalize(L) + normalize(V));
+                float sToMultiply = pow(max(dot(normalize(normal), normalize(H)), 0.0), n);
+                vec3 s = vec3(lightS[0] * mSpecular[0] * sToMultiply, lightS[1] * mSpecular[1] * sToMultiply, lightS[2] * mSpecular[2] * sToMultiply);
+    
+                gl_FragColor = vec4(a[0] + d[0] + s[0], a[1] + d[1] + s[1], a[2] + d[2] + s[2], 1.0);
+            }   
         }
     `;
     
@@ -204,6 +218,7 @@ function setupShaders() {
         uniform vec3 lAmbient;
         uniform vec3 lDiffuse;
         uniform vec3 lSpecular;
+        uniform int lightSwitch;
         uniform vec4 eyePos;
         uniform mat4 uModelMatrix; // the model matrix
         uniform mat4 pMatrix;
@@ -226,6 +241,7 @@ function setupShaders() {
         varying vec3 lightD;
         varying vec3 lightS;
         varying vec3 eyeLoc;
+        varying float lightSwitchToPass;
 
         void main(void) {
             vec4 tempVal = uModelMatrix * vec4(vertexPosition, 1.0);
@@ -242,6 +258,12 @@ function setupShaders() {
             lightA = lAmbient;
             lightD = lDiffuse;
             lightS = lSpecular;
+
+            if(lightSwitch == 1) {
+				lightSwitchToPass = 1.0;
+			} else if (lightSwitch == 2) {
+				lightSwitchToPass = 2.0;
+			}
         }
     `;
     
@@ -316,10 +338,10 @@ function setupShaders() {
                     var lightSpecular = gl.getUniformLocation(shaderProgram, "lSpecular");
                     gl.uniform3fv(lightSpecular, new Float32Array(lSpecularArray));
 
-                }
+                    var lightSwitch = gl.getUniformLocation(shaderProgram, "lightSwitch");
+                    gl.uniform1i(lightSwitch, lightSwitchNum);
 
-                var eyePosition = gl.getUniformLocation(shaderProgram, "eyePos");
-                gl.uniform4fv(eyePosition, Eye);
+                }
 
                 var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
                 var zNear = 0.01;
@@ -487,9 +509,121 @@ function setupShaders() {
                         vec3.rotateX(lookAt, lookAt, EyeVec, -Math.PI/40);
                         lookAtMatrix = mat4.lookAt(lookAtMatrix, EyeVec, lookAt, lookUp);
                     }
+                    if (event.key === 'b') {
+                        if(lightSwitchNum == 1) {
+                            lightSwitchNum = 2;
+                            var lightSwitch = gl.getUniformLocation(shaderProgram, "lightSwitch");
+                            gl.uniform1i(lightSwitch, lightSwitchNum);
+                        } else {
+                            lightSwitchNum = 1;
+                            var lightSwitch = gl.getUniformLocation(shaderProgram, "lightSwitch");
+                            gl.uniform1i(lightSwitch, lightSwitchNum);
+                        }
+                    }
+                    if (event.key === '1' && !!inputTriangles[selectionIndex].highlighted) {
+                        for (var i = 0; i < inputTriangles[selectionIndex].ambientArray.length; i++) {
+                            if (inputTriangles[selectionIndex].ambientArray[i] <= 1.0) {
+                                inputTriangles[selectionIndex].ambientArray[i] += .1;
+                            }
+                        }
+                        for (var whichSet=0; whichSet<numTriangleSets; whichSet++) {
+                            ambientBuffers[whichSet] = gl.createBuffer();
+                            gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffers[whichSet]);
+                            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].ambientArray),gl.STATIC_DRAW);
+                        }
+                    }
+                    if (event.key === '2' && !!inputTriangles[selectionIndex].highlighted) {
+                        for (var i = 0; i < inputTriangles[selectionIndex].diffuseArray.length; i++) {
+                            if (inputTriangles[selectionIndex].diffuseArray[i] <= 1.0) {
+                                inputTriangles[selectionIndex].diffuseArray[i] += .1;
+                            }
+                        }
+                        for (var whichSet=0; whichSet<numTriangleSets; whichSet++) {
+                            diffuseBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+                            gl.bindBuffer(gl.ARRAY_BUFFER,diffuseBuffers[whichSet]); // activate that buffer
+                            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].diffuseArray),gl.STATIC_DRAW);
+                        }
+                    }
+                    if (event.key === '3' && !!inputTriangles[selectionIndex].highlighted) {
+                        for (var i = 0; i < inputTriangles[selectionIndex].diffuseArray.length; i++) {
+                            if (inputTriangles[selectionIndex].specularArray[i] <= 1.0) {
+                                inputTriangles[selectionIndex].specularArray[i] += .1;
+                            }
+                        }
+                        for (var whichSet=0; whichSet<numTriangleSets; whichSet++) {
+                            specularBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+                            gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffers[whichSet]); // activate that buffer
+                            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].specularArray),gl.STATIC_DRAW);
+                        }
+                    }
+                    if (event.key === 'n' && !!inputTriangles[selectionIndex].highlighted) {
+                        console.log("test");
+                        for(var i = 0; i < inputTriangles[selectionIndex].nArray.length; i++) {
+                            if (inputTriangles[selectionIndex].nArray[i] <= 20) {
+                                inputTriangles[selectionIndex].nArray[i] += 1;
+                            }
+                        }
+                        for (var whichSet=0; whichSet<numTriangleSets; whichSet++) {
+                            nBuffers[whichSet] = gl.createBuffer(); // init empty vertex coord buffer
+                            gl.bindBuffer(gl.ARRAY_BUFFER,nBuffers[whichSet]); // activate that buffer
+                            gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(inputTriangles[whichSet].nArray),gl.STATIC_DRAW);
+                        }
+                        renderTriangles();
+                    }
+                    if (event.key === ';' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(.01,0,0)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'k' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(-.01,0,0)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'o' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(0,0,.01)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'l' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(0,0,-.01)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'i' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(0,.01,0)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'p' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(
+                            inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromTranslation(mat4.create(), vec3.fromValues(0,-.01,0)),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'I' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromRotation(mat4.create(),Math.PI/40,lookAt),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+                    if (event.key === 'P' && !!inputTriangles[selectionIndex].highlighted) {
+                        mat4.multiply(inputTriangles[selectionIndex].mMatrix,
+                            mat4.fromRotation(mat4.create(),-Math.PI/40,lookAt),
+                            inputTriangles[selectionIndex].mMatrix);
+                    }
+
+                    var eyePosition = gl.getUniformLocation(shaderProgram, "eyePos");
+                    gl.uniform4fv(eyePosition, Eye);
                     
                     renderTriangles();
                 });
+
+                
             } // end if no shader program link errors
         } // end if no compile errors
     } // end try 
